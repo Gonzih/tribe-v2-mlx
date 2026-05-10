@@ -20,7 +20,7 @@ import mlx.nn as nn
 @dataclass
 class W2VBertConfig:
     hidden_dim: int = 1024
-    conv_out_dim: int = 512
+    conv_out_dim: int = 160  # facebook/w2v-bert-2.0 uses 160-dim mel features
     depth: int = 24
     num_heads: int = 16
     conv_kernel_size: int = 31
@@ -222,13 +222,16 @@ class MLXWav2VecBert(nn.Module):
 
     def __call__(
         self,
-        waveform: mx.array,
+        x: mx.array,
         extract_layers: Optional[List[int]] = None,
     ) -> Tuple[mx.array, List[mx.array]]:
         """
         Parameters
         ----------
-        waveform : mx.array (B, T_wave)
+        x : mx.array
+            Either (B, T_wave) raw waveform or (B, T, conv_out_dim) mel features.
+            When 2D, the ConvFeatureExtractor is applied first.
+            When 3D, mel features are passed directly to FeatureProjection.
         extract_layers : layer indices to capture
 
         Returns
@@ -239,9 +242,11 @@ class MLXWav2VecBert(nn.Module):
         if extract_layers is None:
             extract_layers = self.config.extract_layers
 
-        # Conv feature extraction
-        x = self.feature_extractor(waveform)       # (B, T_feat, 512)
-        x = self.feature_projection(x)             # (B, T_feat, 1024)
+        if x.ndim == 2:
+            # Raw waveform path: ConvFeatureExtractor → FeatureProjection
+            x = self.feature_extractor(x)          # (B, T_feat, conv_out_dim)
+        # else: x is already (B, T, conv_out_dim) mel features
+        x = self.feature_projection(x)             # (B, T_feat, hidden_dim)
 
         # Positional conv embedding (grouped conv, keep in fp16)
         pos = self.pos_conv_embed(x)

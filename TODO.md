@@ -1,35 +1,21 @@
-# TODO: TRIBE v2 MLX Pipeline Implementation
+# TODO: Real Weight Download + MLX Conversion
 
-- [x] Update PLAN.md for implementation task
-- [x] Create feature branch feat/mlx-pipeline
-- [ ] Write pyproject.toml
-- [ ] Write tribe_v2_mlx package core files
-  - [ ] __init__.py
-  - [ ] utils.py
-  - [ ] preprocessing/video.py + audio.py
-- [ ] Write MLX model files
-  - [ ] models/vjepa2.py (ViT-g)
-  - [ ] models/dinov2.py (ViT-L)
-  - [ ] models/wav2vec_bert.py (Conformer)
-  - [ ] models/llama.py (LLaMA extractor)
-  - [ ] models/tribe.py (TRIBE transformer)
-- [ ] Write conversion scripts
-  - [ ] conversion/vjepa2.py
-  - [ ] conversion/dinov2.py
-  - [ ] conversion/wav2vec_bert.py
-  - [ ] conversion/llama.py
-- [ ] Write pipeline.py
-- [ ] Write tests
-  - [ ] tests/conftest.py
-  - [ ] tests/test_components.py
-  - [ ] tests/test_pipeline.py
-  - [ ] tests/test_quantization.py
-- [ ] Write scripts
-  - [ ] scripts/download_weights.py
-  - [ ] scripts/convert_to_mlx.py
-  - [ ] scripts/run_inference.py
-- [ ] Run tests and verify they pass
-- [ ] git add, diff, commit
+- [x] Create branch feat/real-weights-download
+- [x] Install package (pip3 -e . --break-system-packages)
+- [x] Update PLAN.md and TODO.md
+- [ ] Update download_weights.py to skip large .pt files
+- [ ] Download TRIBE checkpoint (709 MB)
+- [ ] Download DINOv2 (1.22 GB safetensors)
+- [ ] Download Wav2Vec-BERT (2.32 GB safetensors)
+- [ ] Download V-JEPA2 (4.14 GB safetensors)
+- [ ] Inspect TRIBE checkpoint structure (keys, model_build_args)
+- [ ] Run conversion: DINOv2
+- [ ] Run conversion: Wav2Vec-BERT
+- [ ] Run conversion: V-JEPA2
+- [ ] Inspect TRIBE checkpoint; fix from_checkpoint() if key names differ
+- [ ] Run requires_weights tests
+- [ ] Run inference script with synthetic input
+- [ ] Write research/quantization-results.md
+- [ ] git add/diff/commit
 - [ ] git push
-- [ ] gh pr create
-- [ ] gh pr merge
+- [ ] gh pr create + merge

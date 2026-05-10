@@ -1,20 +1,28 @@
 """
-Convert DINOv2-Large weights from HuggingFace to MLX safetensors.
+Convert DINOv2-Large weights from HuggingFace safetensors to MLX format.
 
 Source: facebook/dinov2-large
 Output: dinov2-large-{bits}bit.safetensors
 
-HuggingFace Dinov2Model key layout:
+Actual safetensors key layout (verified from model.safetensors inspection):
+  embeddings.cls_token: (1, 1, 1024)
   embeddings.patch_embeddings.projection.{weight,bias}
-  embeddings.cls_token
-  embeddings.register_tokens
-  embeddings.position_embeddings
+    weight: (1024, 3, 14, 14) — Conv2d format → reshape to (1024, 588)
+  embeddings.position_embeddings: (1, 1370, 1024)  [1 CLS + 1369 patches @ 518px]
+  embeddings.mask_token  (skip)
   encoder.layer.N.norm1.{weight,bias}
+  encoder.layer.N.norm2.{weight,bias}
   encoder.layer.N.attention.attention.{query,key,value}.{weight,bias}
   encoder.layer.N.attention.output.dense.{weight,bias}
-  encoder.layer.N.norm2.{weight,bias}
-  encoder.layer.N.mlp.{fc1,fc2}.{weight,bias}   (or intermediate/output)
+  encoder.layer.N.mlp.fc1.{weight,bias}
+  encoder.layer.N.mlp.fc2.{weight,bias}
+  encoder.layer.N.layer_scale1.lambda1  (skip — layer scale)
+  encoder.layer.N.layer_scale2.lambda1  (skip — layer scale)
   layernorm.{weight,bias}
+
+Architecture (from config.json):
+  hidden_size=1024, num_hidden_layers=24, patch_size=14, image_size=518,
+  num_register_tokens=0 (no register tokens in facebook/dinov2-large)
 """
 from __future__ import annotations
 
@@ -24,19 +32,19 @@ from typing import Optional
 
 import mlx.core as mx
 import mlx.nn as nn
-import numpy as np
+from mlx.utils import tree_flatten
 
 
 def _hf_key_to_mlx(hf_key: str) -> Optional[str]:
     k = hf_key
-    for prefix in ("dinov2.", "model.", ""):
-        pass  # no prefix stripping needed for Dinov2Model
 
     # Patch embedding
     if k == "embeddings.patch_embeddings.projection.weight":
-        return "patch_embed.proj.weight"
+        return "patch_embed.proj.weight"  # Conv2d → Linear via reshape
     if k == "embeddings.patch_embeddings.projection.bias":
         return "patch_embed.proj.bias"
+
+    # Special tokens and positional embeddings
     if k == "embeddings.cls_token":
         return "cls_token"
     if k == "embeddings.register_tokens":
@@ -44,13 +52,19 @@ def _hf_key_to_mlx(hf_key: str) -> Optional[str]:
     if k == "embeddings.position_embeddings":
         return "pos_embed"
 
+    # Skip mask_token (not used in our model)
+    if k == "embeddings.mask_token":
+        return None
+
+    # Final norm
+    if k == "layernorm.weight":
+        return "norm.weight"
+    if k == "layernorm.bias":
+        return "norm.bias"
+
     # Transformer blocks
     m = re.match(r"encoder\.layer\.(\d+)\.(.*)", k)
     if not m:
-        if k in ("layernorm.weight",):
-            return "norm.weight"
-        if k in ("layernorm.bias",):
-            return "norm.bias"
         return None
 
     idx, rest = int(m.group(1)), m.group(2)
@@ -61,7 +75,7 @@ def _hf_key_to_mlx(hf_key: str) -> Optional[str]:
         "norm1.bias": f"{prefix}.norm1.bias",
         "norm2.weight": f"{prefix}.norm2.weight",
         "norm2.bias": f"{prefix}.norm2.bias",
-        # HF attention
+        # Attention (DINOv2: double .attention. nesting)
         "attention.attention.query.weight": f"{prefix}.attn.query_proj.weight",
         "attention.attention.query.bias": f"{prefix}.attn.query_proj.bias",
         "attention.attention.key.weight": f"{prefix}.attn.key_proj.weight",
@@ -70,7 +84,7 @@ def _hf_key_to_mlx(hf_key: str) -> Optional[str]:
         "attention.attention.value.bias": f"{prefix}.attn.value_proj.bias",
         "attention.output.dense.weight": f"{prefix}.attn.out_proj.weight",
         "attention.output.dense.bias": f"{prefix}.attn.out_proj.bias",
-        # MLP (DINOv2 uses fc1/fc2 directly)
+        # MLP (DINOv2 safetensors use fc1/fc2 directly)
         "mlp.fc1.weight": f"{prefix}.mlp.fc1.weight",
         "mlp.fc1.bias": f"{prefix}.mlp.fc1.bias",
         "mlp.fc2.weight": f"{prefix}.mlp.fc2.weight",
@@ -81,6 +95,9 @@ def _hf_key_to_mlx(hf_key: str) -> Optional[str]:
         "output.dense.weight": f"{prefix}.mlp.fc2.weight",
         "output.dense.bias": f"{prefix}.mlp.fc2.bias",
     }
+    # Skip layer_scale parameters (not in our model)
+    if rest.startswith("layer_scale"):
+        return None
     return mappings.get(rest)
 
 
@@ -91,33 +108,51 @@ def convert_dinov2(
     hf_token: Optional[str] = None,
 ) -> None:
     """
-    Download DINOv2-Large from HuggingFace, convert to MLX, optionally quantize.
+    Convert DINOv2-Large weights to MLX safetensors.
+
+    Uses the real model config: image_size=518, num_register_tokens=0.
+    The patch embedding Conv2d weight is reshaped to fit our Linear-based implementation.
     """
     import os
-    from transformers import AutoModel
 
     if hf_token is None:
         hf_token = os.environ.get("HF_TOKEN")
 
-    print(f"Loading {hf_model_id} …")
-    hf_model = AutoModel.from_pretrained(hf_model_id, token=hf_token)
-    hf_state = hf_model.state_dict()
+    model_path = Path(hf_model_id)
+    if model_path.is_dir():
+        sf_path = model_path / "model.safetensors"
+    else:
+        from huggingface_hub import hf_hub_download
+        sf_path = Path(hf_hub_download(
+            repo_id=hf_model_id, filename="model.safetensors", token=hf_token
+        ))
+
+    print(f"Loading DINOv2-Large weights from {sf_path} …")
+    hf_weights = mx.load(str(sf_path))
 
     unmapped = []
     mlx_weights: dict[str, mx.array] = {}
-    for hf_key, tensor in hf_state.items():
+
+    for hf_key, arr in hf_weights.items():
         mlx_key = _hf_key_to_mlx(hf_key)
         if mlx_key is None:
             unmapped.append(hf_key)
             continue
-        mlx_weights[mlx_key] = mx.array(tensor.float().numpy())
+
+        # Conv2d patch embed: (1024, 3, 14, 14) → (1024, 588) for Linear
+        if mlx_key == "patch_embed.proj.weight" and arr.ndim == 4:
+            arr = arr.reshape(arr.shape[0], -1)
+
+        mlx_weights[mlx_key] = arr.astype(mx.float32)
 
     if unmapped:
         print(f"  Skipped {len(unmapped)} unmapped keys: {unmapped[:5]} …")
-    print(f"Mapped {len(mlx_weights)} parameters.")
+    print(f"Mapped {len(mlx_weights)} parameters to MLX layout.")
 
+    # Use real model config: image_size=518, no register tokens
     from tribe_v2_mlx.models.dinov2 import MLXDINOv2Large, DINOv2Config
-    model = MLXDINOv2Large(DINOv2Config())
+    config = DINOv2Config(image_size=518, num_register_tokens=0)
+    model = MLXDINOv2Large(config)
     model.load_weights(list(mlx_weights.items()), strict=False)
     mx.eval(model.parameters())
 
@@ -127,13 +162,20 @@ def convert_dinov2(
             model,
             bits=quantize_bits,
             class_predicate=lambda _, m: (
-                isinstance(m, nn.Linear) and m.weight.shape[-1] >= 64
+                isinstance(m, nn.Linear)
+                and m.weight.shape[-1] % 64 == 0
+                and m.weight.shape[-1] >= 64
             ),
         )
         mx.eval(model.parameters())
 
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    weights_dict = dict(model.parameters())
-    mx.save_safetensors(str(out), {k: v for k, v in weights_dict.items() if v is not None})
-    print(f"Saved → {out}")
+    # Skip zero-size arrays (e.g. register_tokens when num_register_tokens=0)
+    flat = {
+        k: v
+        for k, v in tree_flatten(model.parameters())
+        if isinstance(v, mx.array) and v.size > 0
+    }
+    mx.save_safetensors(str(out), flat)
+    print(f"Saved → {out}  ({len(flat)} tensors)")

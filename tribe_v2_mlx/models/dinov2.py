@@ -132,13 +132,15 @@ class MLXDINOv2Large(nn.Module):
 
         B = x.shape[0]
         patches = self.patch_embed(x)              # (B, n_patches, D)
-        n_patches = patches.shape[1]
 
         cls = mx.broadcast_to(self.cls_token, (B, 1, self.config.hidden_dim))
-        regs = mx.broadcast_to(
-            self.register_tokens, (B, self.config.num_register_tokens, self.config.hidden_dim)
-        )
-        tokens = mx.concatenate([cls, regs, patches], axis=1)  # (B, 1+R+N, D)
+        if self.config.num_register_tokens > 0:
+            regs = mx.broadcast_to(
+                self.register_tokens, (B, self.config.num_register_tokens, self.config.hidden_dim)
+            )
+            tokens = mx.concatenate([cls, regs, patches], axis=1)  # (B, 1+R+N, D)
+        else:
+            tokens = mx.concatenate([cls, patches], axis=1)        # (B, 1+N, D)
 
         tokens = tokens + self.pos_embed[:, : tokens.shape[1], :]
 

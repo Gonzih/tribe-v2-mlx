@@ -1,20 +1,27 @@
 """
-Convert V-JEPA2 ViT-g weights from HuggingFace to MLX safetensors.
+Convert V-JEPA2 ViT-g weights from HuggingFace safetensors to MLX format.
 
 Source: facebook/vjepa2-vitg-fpc64-256
 Output: vjepa2-vitg-{bits}bit.safetensors
 
-HuggingFace key → MLX key mapping:
-  vjepa.{embeddings.patch_embeddings.projection} → patch_embed.proj
-  vjepa.{encoder.layer.N.layernorm_before}       → blocks.N.norm1
-  vjepa.{encoder.layer.N.attention.attention.query} → blocks.N.attn.query_proj
-  vjepa.{encoder.layer.N.attention.attention.key}   → blocks.N.attn.key_proj
-  vjepa.{encoder.layer.N.attention.attention.value} → blocks.N.attn.value_proj
-  vjepa.{encoder.layer.N.attention.output.dense}    → blocks.N.attn.out_proj
-  vjepa.{encoder.layer.N.layernorm_after}           → blocks.N.norm2
-  vjepa.{encoder.layer.N.intermediate.dense}        → blocks.N.mlp.fc1
-  vjepa.{encoder.layer.N.output.dense}              → blocks.N.mlp.fc2
-  vjepa.{layernorm}                                  → norm
+Actual safetensors key layout (verified from model.safetensors inspection):
+  encoder.embeddings.patch_embeddings.proj.{weight,bias}
+  encoder.layer.N.norm1.{weight,bias}
+  encoder.layer.N.norm2.{weight,bias}
+  encoder.layer.N.attention.{query,key,value}.{weight,bias}
+  encoder.layer.N.attention.proj.{weight,bias}
+  encoder.layer.N.mlp.fc1.{weight,bias}
+  encoder.layer.N.mlp.fc2.{weight,bias}
+  encoder.layernorm.{weight,bias}
+  predictor.*  (skip — not needed for encoding)
+
+Architecture (from config.json):
+  hidden_size=1408, num_hidden_layers=40, num_attention_heads=22,
+  mlp_dim=6144, patch_size=16, tubelet_size=2, image_size=256
+
+Key shape notes:
+  patch_embeddings.proj.weight: (1408, 3, 2, 16, 16) — Conv3d format
+    → reshape to (1408, 1536) for our Linear-based TubeletEmbedding
 """
 from __future__ import annotations
 
@@ -24,63 +31,51 @@ from typing import Optional
 
 import mlx.core as mx
 import mlx.nn as nn
-import numpy as np
+from mlx.utils import tree_flatten
 
 
 def _hf_key_to_mlx(hf_key: str) -> Optional[str]:
-    """
-    Map a HuggingFace V-JEPA2 parameter name to the MLX module tree.
-
-    Returns None if the key should be skipped (e.g. pooler, decoder).
-    """
-    # Strip top-level model prefixes
     k = hf_key
-    for prefix in ("vjepa.", "model.", "vision_model."):
-        if k.startswith(prefix):
-            k = k[len(prefix):]
 
-    # Patch embedding
-    if k == "embeddings.patch_embeddings.projection.weight":
+    # Patch embedding (Conv3d weight handled by reshape in convert function)
+    if k == "encoder.embeddings.patch_embeddings.proj.weight":
         return "patch_embed.proj.weight"
-    if k == "embeddings.patch_embeddings.projection.bias":
+    if k == "encoder.embeddings.patch_embeddings.proj.bias":
         return "patch_embed.proj.bias"
 
-    # Positional / CLS embeddings
-    if "position_embeddings" in k:
-        return "pos_embed"
-    if "cls_token" in k:
-        return "cls_token"
+    # Final layer norm
+    if k == "encoder.layernorm.weight":
+        return "norm.weight"
+    if k == "encoder.layernorm.bias":
+        return "norm.bias"
 
     # Transformer blocks
     m = re.match(r"encoder\.layer\.(\d+)\.(.*)", k)
     if not m:
-        # Final layernorm
-        if k in ("layernorm.weight", "norm.weight"):
-            return "norm.weight"
-        if k in ("layernorm.bias", "norm.bias"):
-            return "norm.bias"
-        return None
+        return None  # skip predictor.* and other keys
 
     idx, rest = int(m.group(1)), m.group(2)
     prefix = f"blocks.{idx}"
 
     mappings = {
-        "layernorm_before.weight": f"{prefix}.norm1.weight",
-        "layernorm_before.bias": f"{prefix}.norm1.bias",
-        "layernorm_after.weight": f"{prefix}.norm2.weight",
-        "layernorm_after.bias": f"{prefix}.norm2.bias",
-        "attention.attention.query.weight": f"{prefix}.attn.query_proj.weight",
-        "attention.attention.query.bias": f"{prefix}.attn.query_proj.bias",
-        "attention.attention.key.weight": f"{prefix}.attn.key_proj.weight",
-        "attention.attention.key.bias": f"{prefix}.attn.key_proj.bias",
-        "attention.attention.value.weight": f"{prefix}.attn.value_proj.weight",
-        "attention.attention.value.bias": f"{prefix}.attn.value_proj.bias",
-        "attention.output.dense.weight": f"{prefix}.attn.out_proj.weight",
-        "attention.output.dense.bias": f"{prefix}.attn.out_proj.bias",
-        "intermediate.dense.weight": f"{prefix}.mlp.fc1.weight",
-        "intermediate.dense.bias": f"{prefix}.mlp.fc1.bias",
-        "output.dense.weight": f"{prefix}.mlp.fc2.weight",
-        "output.dense.bias": f"{prefix}.mlp.fc2.bias",
+        "norm1.weight": f"{prefix}.norm1.weight",
+        "norm1.bias": f"{prefix}.norm1.bias",
+        "norm2.weight": f"{prefix}.norm2.weight",
+        "norm2.bias": f"{prefix}.norm2.bias",
+        # Attention (V-JEPA2 safetensors: encoder.layer.N.attention.{query,key,value,proj})
+        "attention.query.weight": f"{prefix}.attn.query_proj.weight",
+        "attention.query.bias": f"{prefix}.attn.query_proj.bias",
+        "attention.key.weight": f"{prefix}.attn.key_proj.weight",
+        "attention.key.bias": f"{prefix}.attn.key_proj.bias",
+        "attention.value.weight": f"{prefix}.attn.value_proj.weight",
+        "attention.value.bias": f"{prefix}.attn.value_proj.bias",
+        "attention.proj.weight": f"{prefix}.attn.out_proj.weight",
+        "attention.proj.bias": f"{prefix}.attn.out_proj.bias",
+        # MLP
+        "mlp.fc1.weight": f"{prefix}.mlp.fc1.weight",
+        "mlp.fc1.bias": f"{prefix}.mlp.fc1.bias",
+        "mlp.fc2.weight": f"{prefix}.mlp.fc2.weight",
+        "mlp.fc2.bias": f"{prefix}.mlp.fc2.bias",
     }
     return mappings.get(rest)
 
@@ -92,45 +87,49 @@ def convert_vjepa2(
     hf_token: Optional[str] = None,
 ) -> None:
     """
-    Download V-JEPA2 ViT-g from HuggingFace, convert to MLX, optionally quantize.
+    Convert V-JEPA2 ViT-g weights to MLX safetensors.
 
-    Parameters
-    ----------
-    hf_model_id : HuggingFace model ID
-    output_path : where to save the MLX safetensors file
-    quantize_bits : 4 or 8 for quantization; 0 or None for fp16
-    hf_token : HuggingFace token (falls back to HF_TOKEN env var)
+    Loads directly from model.safetensors (no AutoModel needed).
+    Handles Conv3d → Linear reshape for patch embedding.
     """
     import os
-    from transformers import AutoModel
 
     if hf_token is None:
         hf_token = os.environ.get("HF_TOKEN")
 
-    print(f"Loading {hf_model_id} from HuggingFace …")
-    hf_model = AutoModel.from_pretrained(
-        hf_model_id,
-        token=hf_token,
-        trust_remote_code=True,
-    )
-    hf_state = hf_model.state_dict()
+    # Find the safetensors file
+    model_path = Path(hf_model_id)
+    if model_path.is_dir():
+        sf_path = model_path / "model.safetensors"
+    else:
+        # Download from hub
+        from huggingface_hub import hf_hub_download
+        sf_path = Path(hf_hub_download(
+            repo_id=hf_model_id, filename="model.safetensors", token=hf_token
+        ))
 
-    print("Inspecting HuggingFace keys …")
+    print(f"Loading V-JEPA2 weights from {sf_path} …")
+    hf_weights = mx.load(str(sf_path))
+
     unmapped = []
     mlx_weights: dict[str, mx.array] = {}
-    for hf_key, tensor in hf_state.items():
+
+    for hf_key, arr in hf_weights.items():
         mlx_key = _hf_key_to_mlx(hf_key)
         if mlx_key is None:
             unmapped.append(hf_key)
             continue
-        mlx_weights[mlx_key] = mx.array(tensor.float().numpy())
+
+        # Conv3d patch embed weight: (1408, 3, 2, 16, 16) → (1408, 1536)
+        if mlx_key == "patch_embed.proj.weight" and arr.ndim == 5:
+            arr = arr.reshape(arr.shape[0], -1)
+
+        mlx_weights[mlx_key] = arr.astype(mx.float32)
 
     if unmapped:
-        print(f"  Skipped {len(unmapped)} unmapped keys: {unmapped[:5]} …")
-
+        print(f"  Skipped {len(unmapped)} unmapped keys (predictor + unknown): {unmapped[:3]} …")
     print(f"Mapped {len(mlx_weights)} parameters to MLX layout.")
 
-    # Build model and load weights
     from tribe_v2_mlx.models.vjepa2 import MLXVJepa2, vjepa2_vitg_config
     model = MLXVJepa2(vjepa2_vitg_config())
     model.load_weights(list(mlx_weights.items()), strict=False)
@@ -142,13 +141,15 @@ def convert_vjepa2(
             model,
             bits=quantize_bits,
             class_predicate=lambda _, m: (
-                isinstance(m, nn.Linear) and m.weight.shape[-1] >= 64
+                isinstance(m, nn.Linear)
+                and m.weight.shape[-1] % 64 == 0
+                and m.weight.shape[-1] >= 64
             ),
         )
         mx.eval(model.parameters())
 
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    weights_dict = dict(model.parameters())
-    mx.save_safetensors(str(out), {k: v for k, v in weights_dict.items() if v is not None})
-    print(f"Saved MLX weights → {out}")
+    flat = {k: v for k, v in tree_flatten(model.parameters()) if isinstance(v, mx.array)}
+    mx.save_safetensors(str(out), flat)
+    print(f"Saved MLX weights → {out}  ({len(flat)} tensors)")
