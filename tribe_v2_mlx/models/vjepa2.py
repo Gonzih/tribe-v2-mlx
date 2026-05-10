@@ -26,6 +26,8 @@ class ViTConfig:
     qkv_bias: bool = True
     # Layers to extract (depth-fraction → index, e.g. 0.75 → 30, 1.0 → 39)
     extract_layers: List[int] = field(default_factory=lambda: [30, 39])
+    # Optional explicit mlp_dim override (for non-integer mlp_ratio models like V-JEPA2)
+    _mlp_dim_override: Optional[int] = None
 
     @property
     def head_dim(self) -> int:
@@ -33,6 +35,8 @@ class ViTConfig:
 
     @property
     def mlp_dim(self) -> int:
+        if self._mlp_dim_override is not None:
+            return self._mlp_dim_override
         return self.hidden_dim * self.mlp_ratio
 
 
@@ -226,14 +230,21 @@ class MLXVJepa2(nn.Module):
 
 
 def vjepa2_vitg_config() -> ViTConfig:
-    """Return the standard V-JEPA2 ViT-g configuration."""
+    """
+    Return the actual V-JEPA2 ViT-g/22 configuration.
+
+    Verified from facebook/vjepa2-vitg-fpc64-256 config.json and safetensors:
+      hidden_size=1408, num_hidden_layers=40, num_attention_heads=22,
+      mlp_dim=6144 (ratio ~4.364), patch_size=16, tubelet_size=2, image_size=256
+    """
     return ViTConfig(
         hidden_dim=1408,
         depth=40,
-        num_heads=16,
-        mlp_ratio=4,
+        num_heads=22,          # actual value from config (not 16 as initially assumed)
+        mlp_ratio=4,           # ignored because _mlp_dim_override is set
         patch_size=16,
         temporal_patch_size=2,
         image_size=256,
         extract_layers=[30, 39],  # depth 0.75 and 1.0
+        _mlp_dim_override=6144,   # verified from fc1.weight shape (6144, 1408)
     )

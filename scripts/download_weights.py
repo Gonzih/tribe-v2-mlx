@@ -23,17 +23,25 @@ import sys
 from pathlib import Path
 
 
-def download_component(repo_id: str, local_dir: str, token: str | None) -> None:
+def download_component(
+    repo_id: str,
+    local_dir: str,
+    token: str | None,
+    extra_ignore: list[str] | None = None,
+) -> None:
     from huggingface_hub import snapshot_download
 
     print(f"\n── Downloading {repo_id} ──")
     Path(local_dir).mkdir(parents=True, exist_ok=True)
+    ignore = ["*.bin.index.json", "flax_model*", "tf_model*", "pytorch_model.bin"]
+    if extra_ignore:
+        ignore.extend(extra_ignore)
     try:
         snapshot_download(
             repo_id=repo_id,
             local_dir=local_dir,
             token=token,
-            ignore_patterns=["*.bin.index.json", "flax_model*", "tf_model*"],
+            ignore_patterns=ignore,
         )
         print(f"   → {local_dir}")
     except Exception as e:
@@ -66,11 +74,18 @@ def main() -> None:
         download_component("facebook/tribev2", str(wdir / "tribe"), token)
 
     # Vision encoders
-    download_component("facebook/vjepa2-vitg-fpc64-256", str(wdir / "vjepa2"), token)
+    # Ignore original/model.pth (16 GB) — only need the 4 GB safetensors
+    download_component(
+        "facebook/vjepa2-vitg-fpc64-256", str(wdir / "vjepa2"), token,
+        extra_ignore=["original/*", "original/model.pth"],
+    )
     download_component("facebook/dinov2-large", str(wdir / "dinov2"), token)
 
-    # Audio encoder
-    download_component("facebook/w2v-bert-2.0", str(wdir / "wav2vec_bert"), token)
+    # Audio encoder — ignore conformer_shaw.pt (2.33 GB old format)
+    download_component(
+        "facebook/w2v-bert-2.0", str(wdir / "wav2vec_bert"), token,
+        extra_ignore=["conformer_shaw.pt", "*.pt"],
+    )
 
     print("\n✓ All downloads complete.")
     print(f"  Weights directory: {wdir.resolve()}")
