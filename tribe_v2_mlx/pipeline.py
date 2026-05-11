@@ -88,35 +88,46 @@ class TribeV2MLXPipeline:
 
         wdir = Path(weights_dir)
 
+        # Shared quantization predicate (must match convert_to_mlx.py)
+        def _quant_pred(_, m):
+            return (
+                isinstance(m, nn.Linear)
+                and m.weight.shape[-1] % 64 == 0
+                and m.weight.shape[-1] >= 64
+            )
+
+        def _load_quantized(model, path, bits=8):
+            """Quantize model structure, then load quantized safetensors weights."""
+            nn.quantize(model, bits=bits, class_predicate=_quant_pred)
+            w = mx.load(str(path))
+            model.load_weights(list(w.items()), strict=False)
+            mx.eval(model.parameters())
+            return model
+
         # --- V-JEPA2 ---
         vjepa2_model = None
         vjepa2_path = wdir / "vjepa2-vitg-8bit.safetensors"
         if vjepa2_path.exists():
             print(f"Loading V-JEPA2 from {vjepa2_path} …")
-            vjepa2_model = MLXVJepa2(vjepa2_vitg_config())
-            weights = mx.load(str(vjepa2_path))
-            vjepa2_model.load_weights(list(weights.items()), strict=False)
-            mx.eval(vjepa2_model.parameters())
+            vjepa2_model = _load_quantized(MLXVJepa2(vjepa2_vitg_config()), vjepa2_path)
 
         # --- DINOv2 ---
         dinov2_model = None
         dinov2_path = wdir / "dinov2-large-8bit.safetensors"
         if dinov2_path.exists():
             print(f"Loading DINOv2 from {dinov2_path} …")
-            dinov2_model = MLXDINOv2Large(DINOv2Config())
-            weights = mx.load(str(dinov2_path))
-            dinov2_model.load_weights(list(weights.items()), strict=False)
-            mx.eval(dinov2_model.parameters())
+            # Use real model config: 518×518 images, 0 register tokens (facebook/dinov2-large)
+            dinov2_model = _load_quantized(
+                MLXDINOv2Large(DINOv2Config(image_size=518, num_register_tokens=0)),
+                dinov2_path,
+            )
 
         # --- Wav2Vec-BERT ---
         w2v_model = None
         w2v_path = wdir / "wav2vec-bert-8bit.safetensors"
         if w2v_path.exists():
             print(f"Loading Wav2Vec-BERT from {w2v_path} …")
-            w2v_model = MLXWav2VecBert(W2VBertConfig())
-            weights = mx.load(str(w2v_path))
-            w2v_model.load_weights(list(weights.items()), strict=False)
-            mx.eval(w2v_model.parameters())
+            w2v_model = _load_quantized(MLXWav2VecBert(W2VBertConfig()), w2v_path)
 
         # --- LLaMA ---
         llama_model = None
@@ -237,9 +248,33 @@ class TribeV2MLXPipeline:
             segments.append(np.zeros(int(_SEGMENT_DURATION * _AUDIO_SR), dtype=np.float32))
         segments = segments[:n_segments]
 
+        # facebook/w2v-bert-2.0 expects 160-dim log-mel features (80 mel × stride-2 stacking),
+        # not raw waveforms through a conv stack.  Use SeamlessM4TFeatureExtractor when the
+        # model is configured for 160-dim input (real weights); fall back to raw waveform
+        # for mock models that use a different conv_out_dim.
+        use_mel = self.w2v_bert.config.conv_out_dim == 160
+        _mel_extractor = getattr(self, "_mel_extractor", None)
+        if use_mel and _mel_extractor is None:
+            try:
+                from transformers import SeamlessM4TFeatureExtractor
+                _mel_extractor = SeamlessM4TFeatureExtractor(
+                    feature_size=80, num_mel_bins=80, sampling_rate=_AUDIO_SR, stride=2
+                )
+                self._mel_extractor = _mel_extractor
+            except Exception:
+                use_mel = False
+
         audio_feats = []
         for seg in segments:
-            x = mx.array(seg[None], dtype=mx.float32)  # (1, T_wave)
+            if use_mel and _mel_extractor is not None:
+                # Compute 160-dim log-mel features and pass as 3D input
+                inp = _mel_extractor(
+                    seg, sampling_rate=_AUDIO_SR, return_tensors="np", padding=False
+                )
+                mel = inp["input_features"]  # (1, T_mel, 160) numpy float32
+                x = mx.array(mel, dtype=mx.float32)  # (1, T_mel, 160)
+            else:
+                x = mx.array(seg[None], dtype=mx.float32)  # (1, T_wave) raw waveform
             _, hidden = self.w2v_bert(x, extract_layers=self.w2v_bert.config.extract_layers)
             # Pool over time → (1, D) per layer
             pooled = mx.concatenate([h.mean(axis=1) for h in hidden], axis=-1)
