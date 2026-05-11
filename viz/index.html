@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TRIBE v2 — Brain Activation Viewer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0a0a14;
+      --panel:     #10101e;
+      --border:    #1e1e3a;
+      --accent:    #7c3aed;
+      --accent2:   #06b6d4;
+      --text:      #e2e8f0;
+      --muted:     #64748b;
+      --danger:    #ef4444;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+      font-size: 13px;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Header ─────────────────────────────────────────── */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+      flex-shrink: 0;
+      z-index: 10;
+    }
+    header h1 {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--accent2);
+      letter-spacing: 0.05em;
+    }
+    header .tag {
+      font-size: 10px;
+      background: var(--accent);
+      color: #fff;
+      padding: 2px 8px;
+      border-radius: 99px;
+      letter-spacing: 0.08em;
+    }
+    header .meta {
+      margin-left: auto;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    /* ── Main layout ─────────────────────────────────────── */
+    .layout {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── 3D Canvas ───────────────────────────────────────── */
+    #canvas-wrap {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+    #three-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* ── Side panel ──────────────────────────────────────── */
+    .side-panel {
+      width: 280px;
+      flex-shrink: 0;
+      background: var(--panel);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      overflow-y: auto;
+    }
+    .panel-section {
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    .panel-section h2 {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+
+    /* File loader */
+    .file-row {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .file-row label {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    input[type="file"] {
+      width: 100%;
+      font-size: 11px;
+      color: var(--text);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 4px 6px;
+      cursor: pointer;
+    }
+    input[type="file"]::file-selector-button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 3px;
+      padding: 3px 8px;
+      font-size: 11px;
+      cursor: pointer;
+      margin-right: 8px;
+    }
+
+    /* Hemisphere toggle */
+    .hemi-row {
+      display: flex;
+      gap: 6px;
+    }
+    .hemi-btn {
+      flex: 1;
+      padding: 7px 0;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: var(--bg);
+      color: var(--muted);
+      font-family: inherit;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+      letter-spacing: 0.04em;
+    }
+    .hemi-btn.active {
+      border-color: var(--accent2);
+      color: var(--accent2);
+      background: rgba(6, 182, 212, 0.1);
+    }
+
+    /* Time controls */
+    .time-label-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 6px;
+    }
+    .time-label-row .seg-info {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--accent2);
+    }
+    .time-label-row .seg-max {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+      cursor: pointer;
+      margin: 4px 0;
+    }
+    .time-secs {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    /* Play/pause */
+    .play-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .play-btn {
+      flex: 1;
+      padding: 8px 0;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 5px;
+      font-family: inherit;
+      font-size: 13px;
+      cursor: pointer;
+      letter-spacing: 0.04em;
+      transition: opacity 0.15s;
+    }
+    .play-btn:hover { opacity: 0.85; }
+    .speed-btn {
+      padding: 8px 10px;
+      background: var(--bg);
+      color: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      font-family: inherit;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .speed-btn.active {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* Stats */
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 3px 0;
+      font-size: 11px;
+      border-bottom: 1px dashed var(--border);
+    }
+    .stat-row:last-child { border-bottom: none; }
+    .stat-row .k { color: var(--muted); }
+    .stat-row .v { color: var(--text); font-weight: 600; }
+
+    /* Color bar */
+    .colorbar-wrap {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    .colorbar-wrap h2 {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+    .colorbar {
+      width: 100%;
+      height: 18px;
+      border-radius: 3px;
+      background: linear-gradient(to right,
+        #2563eb 0%,
+        #60a5fa 20%,
+        #ffffff 50%,
+        #f87171 80%,
+        #dc2626 100%
+      );
+      border: 1px solid var(--border);
+    }
+    .colorbar-labels {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 4px;
+      font-size: 10px;
+      color: var(--muted);
+    }
+
+    /* Status overlay */
+    #status-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(10,10,20,0.92);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      z-index: 100;
+    }
+    #status-overlay.hidden { display: none; }
+    .status-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--accent2);
+      letter-spacing: 0.06em;
+    }
+    .status-sub {
+      font-size: 13px;
+      color: var(--muted);
+      max-width: 360px;
+      text-align: center;
+      line-height: 1.6;
+    }
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Tooltip */
+    #tooltip {
+      position: absolute;
+      pointer-events: none;
+      background: rgba(16,16,30,0.92);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 11px;
+      color: var(--text);
+      display: none;
+      z-index: 50;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>TRIBE v2 — Brain Activation Viewer</h1>
+  <span class="tag">MLX</span>
+  <span class="tag">fsaverage5</span>
+  <div class="meta" id="meta-label">Load mesh + activations to begin</div>
+</header>
+
+<div class="layout">
+  <div id="canvas-wrap">
+    <canvas id="three-canvas"></canvas>
+
+    <div id="status-overlay">
+      <div class="spinner" id="spinner"></div>
+      <div class="status-title" id="status-title">TRIBE v2 Brain Viewer</div>
+      <div class="status-sub" id="status-sub">
+        Load <code>output/brain-mesh.json</code> then
+        <code>output/nexus-demo-activations.json</code> using the panel on the right.
+        <br><br>
+        Or run: <code>python scripts/export_viz.py --activations output/*.npy</code>
+      </div>
+    </div>
+
+    <div id="tooltip"></div>
+  </div>
+
+  <aside class="side-panel">
+
+    <!-- File loader -->
+    <div class="panel-section">
+      <h2>Data Files</h2>
+      <div class="file-row">
+        <label>Brain Mesh JSON (brain-mesh.json)</label>
+        <input type="file" id="mesh-file" accept=".json" />
+      </div>
+      <div class="file-row" style="margin-top:10px;">
+        <label>Activations JSON (*-activations.json)</label>
+        <input type="file" id="act-file" accept=".json" />
+      </div>
+    </div>
+
+    <!-- Hemisphere -->
+    <div class="panel-section">
+      <h2>Hemisphere</h2>
+      <div class="hemi-row">
+        <button class="hemi-btn active" id="btn-lh" onclick="setHemi('lh')">Left (LH)</button>
+        <button class="hemi-btn" id="btn-rh" onclick="setHemi('rh')">Right (RH)</button>
+        <button class="hemi-btn" id="btn-both" onclick="setHemi('both')">Both</button>
+      </div>
+    </div>
+
+    <!-- Time scrubber -->
+    <div class="panel-section">
+      <h2>Time Segment</h2>
+      <div class="time-label-row">
+        <div class="seg-info" id="seg-num">—</div>
+        <div class="seg-max" id="seg-max">of —</div>
+      </div>
+      <input type="range" id="time-slider" min="0" max="0" value="0"
+             oninput="onSlider(this.value)" />
+      <div class="time-secs" id="time-secs">t = — s</div>
+      <div class="play-row">
+        <button class="play-btn" id="play-btn" onclick="togglePlay()">▶ Play</button>
+        <button class="speed-btn active" id="speed-1x" onclick="setSpeed(1)">1×</button>
+        <button class="speed-btn" id="speed-2x" onclick="setSpeed(2)">2×</button>
+        <button class="speed-btn" id="speed-4x" onclick="setSpeed(4)">4×</button>
+      </div>
+    </div>
+
+    <!-- Color scale -->
+    <div class="colorbar-wrap">
+      <h2>Activation (β)</h2>
+      <div class="colorbar"></div>
+      <div class="colorbar-labels">
+        <span id="cbar-min">—</span>
+        <span>0</span>
+        <span id="cbar-max">—</span>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="panel-section">
+      <h2>Current Segment Stats</h2>
+      <div class="stat-row"><span class="k">Min β</span><span class="v" id="stat-min">—</span></div>
+      <div class="stat-row"><span class="k">Max β</span><span class="v" id="stat-max">—</span></div>
+      <div class="stat-row"><span class="k">Mean β</span><span class="v" id="stat-mean">—</span></div>
+      <div class="stat-row"><span class="k">Std β</span><span class="v" id="stat-std">—</span></div>
+      <div class="stat-row"><span class="k">Segments</span><span class="v" id="stat-segs">—</span></div>
+      <div class="stat-row"><span class="k">Vertices</span><span class="v" id="stat-verts">—</span></div>
+    </div>
+
+    <!-- Render options -->
+    <div class="panel-section">
+      <h2>Display</h2>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+        <input type="checkbox" id="cb-rotate" checked onchange="autoRotate=this.checked;" />
+        <span>Auto-rotate</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:8px;">
+        <input type="checkbox" id="cb-wireframe" onchange="setWireframe(this.checked);" />
+        <span>Wireframe</span>
+      </label>
+    </div>
+
+  </aside>
+</div>
+
+<!-- Three.js r160 + OrbitControls -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ── State ────────────────────────────────────────────────────────────────────
+let meshData = null;
+let actData  = null;
+let currentSeg = 0;
+let isPlaying  = false;
+let playSpeed  = 1;
+let lastFrameTime = 0;
+let segInterval = 2000; // ms per segment (1× speed)
+window.autoRotate = true;
+
+let scene, camera, renderer, controls;
+let lhMesh = null, rhMesh = null;
+let currentHemi = 'lh';
+
+// ── Three.js setup ───────────────────────────────────────────────────────────
+function initThree() {
+  const canvas = document.getElementById('three-canvas');
+  const wrap   = document.getElementById('canvas-wrap');
+
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setClearColor(0x0a0a14, 1);
+  renderer.setSize(wrap.clientWidth, wrap.clientHeight);
+
+  scene  = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(45, wrap.clientWidth / wrap.clientHeight, 0.1, 2000);
+  camera.position.set(0, 0, 200);
+
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.rotateSpeed   = 0.6;
+  controls.zoomSpeed     = 1.2;
+
+  // Lights
+  const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+  scene.add(ambient);
+
+  const dir1 = new THREE.DirectionalLight(0xffffff, 1.2);
+  dir1.position.set(1, 2, 3);
+  scene.add(dir1);
+
+  const dir2 = new THREE.DirectionalLight(0x6366f1, 0.4);
+  dir2.position.set(-2, -1, -2);
+  scene.add(dir2);
+
+  // Grid helper hint
+  const gridGeo = new THREE.PlaneGeometry(500, 500, 30, 30);
+  const gridMat = new THREE.MeshBasicMaterial({
+    color: 0x1e1e3a, wireframe: true, transparent: true, opacity: 0.2
+  });
+  const grid = new THREE.Mesh(gridGeo, gridMat);
+  grid.rotation.x = -Math.PI / 2;
+  grid.position.y = -80;
+  scene.add(grid);
+
+  // Resize handler
+  new ResizeObserver(() => {
+    const w = wrap.clientWidth, h = wrap.clientHeight;
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    renderer.setSize(w, h);
+  }).observe(wrap);
+
+  renderer.setAnimationLoop(animate);
+}
+
+// ── Colormap ─────────────────────────────────────────────────────────────────
+function activationToRGB(val, vmin, vmax) {
+  // Symmetric diverging: blue → white → red
+  const range = Math.max(Math.abs(vmin), Math.abs(vmax));
+  const t = range > 0 ? val / range : 0;  // [-1, +1]
+  const tc = Math.max(-1, Math.min(1, t));
+
+  let r, g, b;
+  if (tc < 0) {
+    // Negative: blue (#2563eb) → white
+    const s = 1 + tc;          // 0 (pure blue) → 1 (white)
+    r = 0.145 + s * 0.855;     // 0.145 → 1.0
+    g = 0.388 + s * 0.612;     // 0.388 → 1.0
+    b = 0.922;                  // stays near 1.0
+  } else {
+    // Positive: white → red (#dc2626)
+    const s = tc;              // 0 (white) → 1 (pure red)
+    r = 1.0;
+    g = 1.0 - s * 0.851;      // 1.0 → 0.149
+    b = 1.0 - s * 0.851;
+  }
+  return [
+    Math.max(0, Math.min(1, r)),
+    Math.max(0, Math.min(1, g)),
+    Math.max(0, Math.min(1, b)),
+  ];
+}
+
+// ── Build mesh geometry ───────────────────────────────────────────────────────
+function buildHemisphereMesh(verts, faces, activations, vmin, vmax) {
+  const n = verts.length / 3;
+  const posArr = new Float32Array(verts);
+  const colArr = new Float32Array(n * 3);
+
+  const act = activations || new Float32Array(n).fill(0);
+  for (let i = 0; i < n; i++) {
+    const [r, g, b] = activationToRGB(act[i], vmin, vmax);
+    colArr[i * 3]     = r;
+    colArr[i * 3 + 1] = g;
+    colArr[i * 3 + 2] = b;
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+  geo.setAttribute('color',    new THREE.BufferAttribute(colArr, 3));
+  geo.setIndex(new THREE.BufferAttribute(new Int32Array(faces), 1));
+  geo.computeVertexNormals();
+
+  const mat = new THREE.MeshPhongMaterial({
+    vertexColors: true,
+    side: THREE.FrontSide,
+    shininess: 18,
+    specular: new THREE.Color(0x222244),
+  });
+  return new THREE.Mesh(geo, mat);
+}
+
+function updateHemisphereColors(mesh, activations, vmin, vmax) {
+  const colAttr = mesh.geometry.getAttribute('color');
+  const n = colAttr.count;
+  for (let i = 0; i < n; i++) {
+    const [r, g, b] = activationToRGB(activations[i], vmin, vmax);
+    colAttr.setXYZ(i, r, g, b);
+  }
+  colAttr.needsUpdate = true;
+}
+
+// ── Load mesh JSON ────────────────────────────────────────────────────────────
+window.loadMesh = function(json) {
+  meshData = json;
+
+  if (lhMesh) { scene.remove(lhMesh); lhMesh.geometry.dispose(); lhMesh = null; }
+  if (rhMesh) { scene.remove(rhMesh); rhMesh.geometry.dispose(); rhMesh = null; }
+
+  const vmin = -1, vmax = 1;  // placeholder until activations loaded
+
+  lhMesh = buildHemisphereMesh(json.lh_vertices, json.lh_faces, null, vmin, vmax);
+  rhMesh = buildHemisphereMesh(json.rh_vertices, json.rh_faces, null, vmin, vmax);
+
+  // Offset hemispheres slightly apart for "both" view
+  lhMesh.userData.origX = -5;
+  rhMesh.userData.origX =  5;
+
+  scene.add(lhMesh);
+  scene.add(rhMesh);
+
+  // Auto-fit camera
+  const box = new THREE.Box3().setFromObject(lhMesh);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  camera.position.set(center.x, center.y, center.z + size.length() * 1.5);
+  controls.target.copy(center);
+  controls.update();
+
+  setHemi(currentHemi);
+  updateStatus(false, 'Mesh loaded. Now load activations JSON.');
+
+  if (actData) applyActivations();
+};
+
+// ── Load activations JSON ─────────────────────────────────────────────────────
+window.loadActivations = function(json) {
+  actData = json;
+
+  // Update UI
+  const slider = document.getElementById('time-slider');
+  slider.max = json.n_segments - 1;
+  slider.value = 0;
+  currentSeg = 0;
+
+  document.getElementById('seg-max').textContent = `of ${json.n_segments}`;
+  document.getElementById('stat-segs').textContent = json.n_segments;
+  document.getElementById('stat-verts').textContent = json.n_vertices.toLocaleString();
+  document.getElementById('cbar-min').textContent = json.global_min.toFixed(3);
+  document.getElementById('cbar-max').textContent = json.global_max.toFixed(3);
+  document.getElementById('meta-label').textContent =
+    `${json.n_segments} segments × ${json.n_vertices.toLocaleString()} vertices`;
+
+  if (meshData) {
+    applyActivations();
+    updateStatus(false, null);
+  }
+};
+
+function applyActivations() {
+  if (!actData || !lhMesh || !rhMesh) return;
+
+  const seg = actData.data[currentSeg];
+  const lhN = actData.lh_n_vertices;
+  const vmin = actData.global_min, vmax = actData.global_max;
+
+  const lhAct = seg.slice(0, lhN);
+  const rhAct = seg.slice(lhN);
+
+  updateHemisphereColors(lhMesh, lhAct, vmin, vmax);
+  updateHemisphereColors(rhMesh, rhAct, vmin, vmax);
+
+  // Update stats
+  let sum = 0, sum2 = 0, mn = Infinity, mx = -Infinity;
+  const displayAct = currentHemi === 'lh' ? lhAct :
+                     currentHemi === 'rh' ? rhAct : seg;
+  for (const v of displayAct) {
+    if (v < mn) mn = v;
+    if (v > mx) mx = v;
+    sum += v; sum2 += v * v;
+  }
+  const n = displayAct.length;
+  const mean = sum / n;
+  const std  = Math.sqrt(sum2 / n - mean * mean);
+
+  document.getElementById('stat-min').textContent  = mn.toFixed(4);
+  document.getElementById('stat-max').textContent  = mx.toFixed(4);
+  document.getElementById('stat-mean').textContent = mean.toFixed(4);
+  document.getElementById('stat-std').textContent  = std.toFixed(4);
+  document.getElementById('seg-num').textContent   = currentSeg + 1;
+  document.getElementById('time-secs').textContent =
+    `t = ${(currentSeg * 4).toFixed(0)} – ${((currentSeg + 1) * 4).toFixed(0)} s`;
+}
+
+// ── Controls ──────────────────────────────────────────────────────────────────
+window.onSlider = function(val) {
+  currentSeg = parseInt(val, 10);
+  applyActivations();
+};
+
+window.togglePlay = function() {
+  isPlaying = !isPlaying;
+  document.getElementById('play-btn').textContent = isPlaying ? '⏸ Pause' : '▶ Play';
+};
+
+window.setSpeed = function(s) {
+  playSpeed = s;
+  document.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(`speed-${s}x`).classList.add('active');
+};
+
+window.setHemi = function(h) {
+  currentHemi = h;
+  document.querySelectorAll('.hemi-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(`btn-${h}`).classList.add('active');
+
+  if (!lhMesh || !rhMesh) return;
+
+  if (h === 'lh') {
+    lhMesh.visible = true;  rhMesh.visible = false;
+    lhMesh.position.x = 0;
+  } else if (h === 'rh') {
+    lhMesh.visible = false; rhMesh.visible = true;
+    rhMesh.position.x = 0;
+  } else {
+    lhMesh.visible = true;  rhMesh.visible = true;
+    lhMesh.position.x = -5;
+    rhMesh.position.x =  5;
+  }
+  applyActivations();
+};
+
+window.setWireframe = function(on) {
+  if (lhMesh) lhMesh.material.wireframe = on;
+  if (rhMesh) rhMesh.material.wireframe = on;
+};
+
+// ── Status overlay ────────────────────────────────────────────────────────────
+function updateStatus(loading, msg) {
+  const overlay = document.getElementById('status-overlay');
+  if (loading) {
+    overlay.classList.remove('hidden');
+    document.getElementById('spinner').style.display = 'block';
+    document.getElementById('status-title').textContent = 'Loading…';
+    document.getElementById('status-sub').textContent = msg || '';
+  } else if (msg) {
+    overlay.classList.remove('hidden');
+    document.getElementById('spinner').style.display = 'none';
+    document.getElementById('status-title').textContent = 'Ready';
+    document.getElementById('status-sub').innerHTML = msg;
+  } else {
+    overlay.classList.add('hidden');
+  }
+}
+
+// ── Animation loop ────────────────────────────────────────────────────────────
+function animate(now) {
+  controls.update();
+
+  if (autoRotate && (lhMesh || rhMesh)) {
+    if (lhMesh) lhMesh.rotation.y += 0.002;
+    if (rhMesh) rhMesh.rotation.y += 0.002;
+  }
+
+  // Auto-advance segments during playback
+  if (isPlaying && actData) {
+    const msPerSeg = segInterval / playSpeed;
+    if (now - lastFrameTime >= msPerSeg) {
+      lastFrameTime = now;
+      currentSeg = (currentSeg + 1) % actData.n_segments;
+      document.getElementById('time-slider').value = currentSeg;
+      applyActivations();
+    }
+  }
+
+  renderer.render(scene, camera);
+}
+
+// ── File input handlers ───────────────────────────────────────────────────────
+document.getElementById('mesh-file').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  updateStatus(true, `Loading ${file.name}…`);
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const json = JSON.parse(ev.target.result);
+      window.loadMesh(json);
+    } catch(err) {
+      updateStatus(false, `Error parsing mesh: ${err.message}`);
+    }
+  };
+  reader.readAsText(file);
+});
+
+document.getElementById('act-file').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  updateStatus(true, `Loading ${file.name}…`);
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const json = JSON.parse(ev.target.result);
+      window.loadActivations(json);
+    } catch(err) {
+      updateStatus(false, `Error parsing activations: ${err.message}`);
+    }
+  };
+  reader.readAsText(file);
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+initThree();
+
+</script>
+</body>
+</html>

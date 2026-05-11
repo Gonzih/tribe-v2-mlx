@@ -1,41 +1,47 @@
-# PLAN: TRIBE v2 MLX — Real Video Inference on Hyperframes Videos
+# PLAN — Full Encoder Pipeline + 3D Brain Visualization
 
 ## Task Restatement
-Run TRIBE v2 MLX inference on two real project videos:
-1. `/tmp/nexus-demo-video/nexus-demo.mp4` — Nexus project demo
-2. `/tmp/invariant-topology-demo/hyperframes-demo/demo.mp4` — Invariant Topology research demo
 
-Capture output shape, wall time, peak MLX memory, activation stats, compare the two
-videos, and write results to `research/real-video-results.md`.
+1. **Part 1**: Wire real MLX encoder weights and run full inference on both videos,
+   saving semantically meaningful activations as `.npy` (and `.json` for visualization).
+2. **Part 2**: Build a standalone `viz/index.html` Three.js brain visualization that
+   renders TRIBE output as a per-vertex heatmap on the fsaverage5 cortical mesh,
+   plus `scripts/export_viz.py` to generate the needed JSON data.
 
-## Situation
-- No real encoder weights exist on this machine (previous agent confirmed)
-- `run_inference.py` without weights → zeros (graceful fallback)
-- `run_e2e_test.py` decodes real video → synthetic features → real TribeTransformer forward → non-zero output
-- Both scripts work and produce valid (if not real-encoder) results
+---
 
-## Three Approaches
+## Part 1 — Approach
 
-### A. run_inference.py only
-- Pros: matches the exact CLI in the task instructions
-- Cons: returns zeros (no real weights) — not informative about activation patterns
+**Chosen: convert scripts download only needed safetensors directly via hf_hub_download**
+- Each conversion script calls `hf_hub_download` for just `model.safetensors`
+- TRIBE checkpoint downloaded via `snapshot_download("facebook/tribev2")`
+- LLaMA: attempt mlx-community/Llama-3.2-3B-Instruct-4bit; skip if slow
 
-### B. run_e2e_test.py only
-- Pros: real video decode, non-zero outputs, exercises full pipeline
-- Cons: uses synthetic (random) features — not real encoder outputs
+---
 
-### C. Both: run_inference.py + run_e2e_test.py on both videos  ← CHOSEN
-- run_inference.py documents the "no-weights baseline"
-- run_e2e_test.py gives meaningful non-zero activations to compare
-- Best for documentation showing what the pipeline produces with real video decoding
+## Part 2 — Approach
 
-## Files to Touch
-- `PLAN.md`, `TODO.md` — planning artifacts
-- `research/real-video-results.md` — new results document
-- (No code changes needed — existing scripts work)
+- **nilearn** `fetch_surf_fsaverage(mesh='fsaverage5')` for mesh vertices + faces
+- **Three.js r160** via CDN (standalone HTML, no build step)
+- Diverging colormap: blue → white → red
+- Dark background (#0a0a14), OrbitControls, time slider, play/pause
+
+---
+
+## Files to Create
+
+- `scripts/export_viz.py` — export mesh + activations to JSON
+- `output/nexus-demo-activations.npy`
+- `output/invariant-topology-activations.npy`
+- `output/brain-mesh.json`
+- `output/nexus-demo-activations.json`
+- `viz/index.html`
+- `viz/README.md`
+
+---
 
 ## Risks
-- Videos may have no audio track → graceful silence fallback already coded
-- Video duration affects n_segments → captured in results
-- Random-weight features mean activation patterns are random, not semantically meaningful
-  (clearly noted in results doc)
+
+1. TRIBE checkpoint may be gated → fall back to synthetic TRIBE weights
+2. V-JEPA2 may have sharded safetensors → need to handle shard discovery
+3. LLaMA ~1.7 GB download — skip if unavailable

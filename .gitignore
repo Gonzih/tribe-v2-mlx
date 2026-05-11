@@ -32,3 +32,6 @@ env/
 .vscode/
 *.swp
 *.swo
+
+# Generated output artifacts (activations, brain mesh JSON)
+output/
