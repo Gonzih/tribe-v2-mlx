@@ -1,21 +1,7 @@
-# TODO: Real Weight Download + MLX Conversion
+# TODO — README Rewrite
 
-- [x] Create branch feat/real-weights-download
-- [x] Install package (pip3 -e . --break-system-packages)
-- [x] Update PLAN.md and TODO.md
-- [ ] Update download_weights.py to skip large .pt files
-- [ ] Download TRIBE checkpoint (709 MB)
-- [ ] Download DINOv2 (1.22 GB safetensors)
-- [ ] Download Wav2Vec-BERT (2.32 GB safetensors)
-- [ ] Download V-JEPA2 (4.14 GB safetensors)
-- [ ] Inspect TRIBE checkpoint structure (keys, model_build_args)
-- [ ] Run conversion: DINOv2
-- [ ] Run conversion: Wav2Vec-BERT
-- [ ] Run conversion: V-JEPA2
-- [ ] Inspect TRIBE checkpoint; fix from_checkpoint() if key names differ
-- [ ] Run requires_weights tests
-- [ ] Run inference script with synthetic input
-- [ ] Write research/quantization-results.md
+- [ ] git checkout -b docs/readme-rewrite
+- [ ] Write README.md
 - [ ] git add/diff/commit
 - [ ] git push
 - [ ] gh pr create + merge
