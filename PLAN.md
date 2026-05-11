@@ -1,40 +1,41 @@
-# PLAN: TRIBE v2 MLX — End-to-End Inference Test
+# PLAN: TRIBE v2 MLX — Real Video Inference on Hyperframes Videos
 
 ## Task Restatement
-Run actual end-to-end inference on a synthetic test video (`/tmp/test-tribe.mp4`,
-10-second, 256×256, ffmpeg testsrc), capture wall time / output shape / peak MLX
-memory / value range, and document results in `research/inference-test-results.md`.
-No real trained weights exist on this machine — the test must work with random-weight
-models while still exercising the full code path.
+Run TRIBE v2 MLX inference on two real project videos:
+1. `/tmp/nexus-demo-video/nexus-demo.mp4` — Nexus project demo
+2. `/tmp/invariant-topology-demo/hyperframes-demo/demo.mp4` — Invariant Topology research demo
 
-## Three Approaches Considered
+Capture output shape, wall time, peak MLX memory, activation stats, compare the two
+videos, and write results to `research/real-video-results.md`.
 
-### A. Run `run_inference.py` with all encoders disabled (--no-*)
-- Pros: minimal changes, tests import and TRIBE forward
-- Cons: `features` dict is empty → returns zeros → output range [0, 0], not interesting
+## Situation
+- No real encoder weights exist on this machine (previous agent confirmed)
+- `run_inference.py` without weights → zeros (graceful fallback)
+- `run_e2e_test.py` decodes real video → synthetic features → real TribeTransformer forward → non-zero output
+- Both scripts work and produce valid (if not real-encoder) results
 
-### B. Download real weights then run (709 MB TRIBE + encoder models)
-- Pros: truly representative results
-- Cons: HF download inside a CI-like runner is slow and fragile; large models need
-  multi-hour download; previous TODO showed downloads as unchecked
+## Three Approaches
 
-### C. Write `scripts/run_e2e_test.py` — real video decode + synthetic features → TRIBE
-- Decode real video with PyAV (exercises full I/O and preprocessing)
-- Build synthetic MLX feature tensors with correct dims for TribeTransformer
-- Run TribeTransformer (random weights) forward pass → non-zero output
-- Measure wall time (video load + TRIBE forward), peak Metal memory, output stats
-- **Chosen approach**: most honest, fully exercises the code path, no network required
+### A. run_inference.py only
+- Pros: matches the exact CLI in the task instructions
+- Cons: returns zeros (no real weights) — not informative about activation patterns
 
-Additionally, run `run_inference.py` as specified (with --no-* flags) to document
-the "no-encoder baseline" separately.
+### B. run_e2e_test.py only
+- Pros: real video decode, non-zero outputs, exercises full pipeline
+- Cons: uses synthetic (random) features — not real encoder outputs
+
+### C. Both: run_inference.py + run_e2e_test.py on both videos  ← CHOSEN
+- run_inference.py documents the "no-weights baseline"
+- run_e2e_test.py gives meaningful non-zero activations to compare
+- Best for documentation showing what the pipeline produces with real video decoding
 
 ## Files to Touch
-- `scripts/run_e2e_test.py` — new standalone script
-- `research/inference-test-results.md` — new results doc
-- `PLAN.md`, `TODO.md` — planning artifacts (this file)
+- `PLAN.md`, `TODO.md` — planning artifacts
+- `research/real-video-results.md` — new results document
+- (No code changes needed — existing scripts work)
 
 ## Risks
-- MLX lazy eval means `mx.eval()` must be called to get meaningful timing
-- `mx.get_peak_memory()` returns bytes; reset with `mx.reset_peak_memory()` before timing
-- V-JEPA2 ViT-g / DINOv2 instantiation with real config + random weights would be
-  very slow (~30 s for parameter init); use TribeTransformer (synthetic config) only
+- Videos may have no audio track → graceful silence fallback already coded
+- Video duration affects n_segments → captured in results
+- Random-weight features mean activation patterns are random, not semantically meaningful
+  (clearly noted in results doc)
